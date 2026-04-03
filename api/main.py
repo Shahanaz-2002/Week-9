@@ -23,10 +23,12 @@ app = FastAPI(title="Clinical Insight Engine API", version="1.0")
 
 # 🔹 Initialize Engines & Cache DB
 logger.info("Initializing Insight Engines and loading Case Database...")
+
 try:
     case_database = fetch_case_database()
     if not case_database:
         logger.warning("Case database is empty or failed to load!")
+        case_database = []
     else:
         logger.info(f"Successfully loaded {len(case_database)} cases into memory.")
 except Exception as e:
@@ -42,20 +44,79 @@ explanation_generator = ExplanationGenerator()
 def analyze_case(request: CaseRequest):
     start_time = time.time()
 
-    # 🔴 Input Validation (Day 1 requirement)
-    if not request.symptoms or len(request.symptoms) == 0:
-        raise HTTPException(status_code=400, detail="Symptoms are required")
+    # 🔹 =========================
+    # INPUT VALIDATION (Enhanced)
+    # 🔹 =========================
 
-    logger.info(f"Received new case analysis request. Symptoms count: {len(request.symptoms)}")
+    # Symptoms validation
+    if not request.symptoms or not isinstance(request.symptoms, list) or len(request.symptoms) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": "Symptoms must be a non-empty list"
+            }
+        )
+
+    # Check for empty strings inside symptoms
+    if any(not s or not s.strip() for s in request.symptoms):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": "Symptoms list contains empty values"
+            }
+        )
+
+    # Age validation
+    if request.age < 0 or request.age > 120:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": "Invalid age. Must be between 0 and 120"
+            }
+        )
+
+    # Gender validation
+    if request.gender.lower() not in ["male", "female", "other"]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": "Invalid gender value"
+            }
+        )
+
+    logger.info(f"Received request | Symptoms: {len(request.symptoms)} | Age: {request.age}")
 
     try:
-        # 🔹 1. Format Input
-        logger.info("Formatting input text for embedding generation...")
-        doctor_notes = request.doctor_notes if request.doctor_notes else ""
-        query_text = " ".join(request.symptoms) + " " + doctor_notes
+        # 🔹 =========================
+        # INPUT FORMATTING
+        # 🔹 =========================
+        doctor_notes = request.doctor_notes.strip() if request.doctor_notes else ""
 
-        # 🔹 2. Retrieve Similar Cases
-        logger.info(f"Querying retrieval engine for top {TOP_K} matches...")
+        query_text = " ".join(request.symptoms).strip()
+        if doctor_notes:
+            query_text += " " + doctor_notes
+
+        # Final safety check
+        if not query_text:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "status": "error",
+                    "message": "Query text is empty after processing input"
+                }
+            )
+
+        logger.info("Input text formatted successfully.")
+
+        # 🔹 =========================
+        # RETRIEVAL
+        # 🔹 =========================
+        logger.info(f"Retrieving top {TOP_K} similar cases...")
+
         top_matches = retrieve_similar_cases(
             query_text=query_text,
             case_database=case_database,
@@ -63,7 +124,7 @@ def analyze_case(request: CaseRequest):
         )
 
         if not top_matches:
-            logger.warning("No similar cases retrieved. Returning default response.")
+            logger.warning("No similar cases found.")
 
             response_time = round((time.time() - start_time) * 1000, 2)
 
@@ -81,35 +142,51 @@ def analyze_case(request: CaseRequest):
                 )
             )
 
-        logger.info(f"Successfully retrieved {len(top_matches)} similar cases.")
+        logger.info(f"{len(top_matches)} similar cases retrieved.")
 
-        # 🔹 3. Generate Insights
-        logger.info("Aggregating clinical insights from retrieved cases...")
+        # 🔹 =========================
+        # INSIGHT GENERATION
+        # 🔹 =========================
         insight = insight_aggregator.aggregate_insights(top_matches)
 
-        # 🔹 4. Compute Confidence
-        logger.info("Computing confidence score...")
+        if not insight:
+            raise ValueError("Insight aggregation failed")
+
+        # 🔹 =========================
+        # CONFIDENCE
+        # 🔹 =========================
         confidence_data = confidence_engine.compute_confidence(top_matches)
 
-        # 🔹 5. Generate Explanation
-        logger.info("Generating clinical explanation...")
+        # 🔹 =========================
+        # EXPLANATION
+        # 🔹 =========================
         explanation = explanation_generator.generate_explanation(insight, top_matches)
 
-        # 🔹 6. Format Similar Cases
-        similar_cases_formatted = [
-            SimilarCase(
-                case_id=c["case_id"],
-                similarity_score=c["similarity"],
-                diagnosis=c.get("diagnosis", "Unknown"),
-                treatment=c.get("treatment", "Unknown")
-            ) for c in top_matches
-        ]
+        # 🔹 =========================
+        # FORMAT SIMILAR CASES
+        # 🔹 =========================
+        similar_cases_formatted = []
+
+        for c in top_matches:
+            try:
+                similar_cases_formatted.append(
+                    SimilarCase(
+                        case_id=c.get("case_id", "Unknown"),
+                        similarity_score=float(c.get("similarity", 0.0)),
+                        diagnosis=c.get("diagnosis", "Unknown"),
+                        treatment=c.get("treatment", "Unknown")
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Skipping malformed case: {e}")
 
         response_time = round((time.time() - start_time) * 1000, 2)
 
-        logger.info(f"Request processed successfully in {response_time}ms")
+        logger.info(f"Request completed in {response_time} ms")
 
-        # 🔹 7. Final Response (API Contract Standard)
+        # 🔹 =========================
+        # FINAL RESPONSE
+        # 🔹 =========================
         return CaseResponse(
             status="success",
             similar_cases=similar_cases_formatted,
@@ -124,14 +201,18 @@ def analyze_case(request: CaseRequest):
             )
         )
 
+    except HTTPException:
+        raise  # rethrow FastAPI errors
+
     except Exception as e:
-        logger.error(f"Error during case analysis pipeline: {str(e)}")
+        logger.error("Pipeline failure", exc_info=True)
 
         raise HTTPException(
             status_code=500,
             detail={
                 "status": "error",
-                "message": "Internal Server Error processing case"
+                "message": "Internal Server Error",
+                "debug": str(e)  # remove in production if needed
             }
         )
 
