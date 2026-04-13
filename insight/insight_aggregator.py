@@ -6,9 +6,7 @@ import time
 logger = logging.getLogger(__name__)
 
 
-
-#  LOG 
-
+# LOG FUNCTION
 def log_event(event_type, message, extra=None):
     log_data = {
         "event": event_type,
@@ -23,7 +21,7 @@ def log_event(event_type, message, extra=None):
 
 class InsightAggregator:
 
-    def aggregate_insights(self, top_matches: List[Dict]) -> Dict:
+    def aggregate_insights(self, top_matches: List[Dict], explanation: str, confidence_data: Dict) -> Dict:
 
         start_time = time.time()
 
@@ -31,9 +29,7 @@ class InsightAggregator:
             "num_cases": len(top_matches) if isinstance(top_matches, list) else 0
         })
 
-        
         # INPUT VALIDATION
-        
         if not isinstance(top_matches, list):
             log_event("validation_error", "top_matches is not a list")
             raise ValueError("top_matches must be a list")
@@ -42,17 +38,21 @@ class InsightAggregator:
             log_event("no_matches", "No matches provided to aggregator")
 
             return {
-                "diagnosis": "Unknown condition",
-                "treatment": "No treatment pattern available"
+                "predicted_diagnosis": "Unknown condition",
+                "suggested_treatment": "No treatment pattern available",
+                "confidence_score": confidence_data.get("confidence_score", 0.0),
+                "confidence_level": confidence_data.get("confidence_level", "Unknown"),
+                "clinical_explanation": explanation,
+                "metadata": {
+                    "retrieval_count": 0
+                }
             }
 
         diagnosis_score = {}
         treatment_score = {}
         processed_cases = 0
 
-        
         # PROCESS EACH CASE
-        
         for case in top_matches:
 
             if not isinstance(case, dict):
@@ -99,9 +99,7 @@ class InsightAggregator:
             "unique_treatments": len(treatment_score)
         })
 
-        
         # FINAL PREDICTION
-        
         if diagnosis_score:
             predicted_diagnosis = max(diagnosis_score, key=diagnosis_score.get)
         else:
@@ -123,7 +121,14 @@ class InsightAggregator:
             "execution_time_ms": total_time
         })
 
+        # FINAL COMBINED RESPONSE (DAY 3 CORE)
         return {
-            "diagnosis": predicted_diagnosis,
-            "treatment": predicted_treatment
+            "predicted_diagnosis": predicted_diagnosis,
+            "suggested_treatment": predicted_treatment,
+            "confidence_score": confidence_data.get("confidence_score", 0.0),
+            "confidence_level": confidence_data.get("confidence_level", "Unknown"),
+            "clinical_explanation": explanation,
+            "metadata": {
+                "retrieval_count": len(top_matches)
+            }
         }

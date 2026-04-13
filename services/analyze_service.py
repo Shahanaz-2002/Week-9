@@ -11,7 +11,7 @@ from insight.explanation_generator import ExplanationGenerator
 from config import TOP_K
 
 
-#  Initialize once
+# Initialize once
 case_database = fetch_case_database()
 
 insight_aggregator = InsightAggregator()
@@ -23,9 +23,8 @@ def analyze_case_pipeline(request, request_id, log_event=None):
     start_time = time.time()
 
     try:
-        
+
         # INPUT FORMATTING
-        
         doctor_notes = request.doctor_notes.strip() if request.doctor_notes else ""
         query_text = " ".join(request.symptoms).strip()
 
@@ -38,9 +37,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
         if log_event:
             log_event("input_processed", request_id, "Input formatted successfully")
 
-        
         # RETRIEVAL
-        
         retrieval_start = time.time()
 
         if log_event:
@@ -60,9 +57,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                 "retrieval_time_ms": retrieval_time
             })
 
-       
         # NO MATCH CASE
-        
         if not top_matches:
             response_time = round((time.time() - start_time) * 1000, 2)
 
@@ -83,22 +78,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                 )
             )
 
-       
-        # INSIGHT GENERATION
-      
-        insight = insight_aggregator.aggregate_insights(top_matches)
-
-        if not insight:
-            raise ValueError("Insight aggregation failed")
-
-        if log_event:
-            log_event("insight_generated", request_id, "Insight created", {
-                "diagnosis": insight.get("diagnosis")
-            })
-
-        
         # CONFIDENCE
-        
         confidence_data = confidence_engine.compute_confidence(top_matches)
 
         if log_event:
@@ -106,17 +86,32 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                 "score": confidence_data.get("confidence_score")
             })
 
-       
+        # TEMP INSIGHT (for explanation only)
+        temp_insight = insight_aggregator.aggregate_insights(
+            top_matches,
+            explanation="",
+            confidence_data={}
+        )
+
         # EXPLANATION
-        
-        explanation = explanation_generator.generate_explanation(insight, top_matches)
+        explanation = explanation_generator.generate_explanation(temp_insight, top_matches)
 
         if log_event:
             log_event("explanation_generated", request_id, "Explanation created")
 
-        
+        # FINAL INSIGHT (DAY 3 CORE)
+        final_insight = insight_aggregator.aggregate_insights(
+            top_matches,
+            explanation=explanation,
+            confidence_data=confidence_data
+        )
+
+        if log_event:
+            log_event("insight_generated", request_id, "Final insight created", {
+                "diagnosis": final_insight.get("predicted_diagnosis")
+            })
+
         # FORMAT SIMILAR CASES
-        
         similar_cases_formatted = []
 
         for c in top_matches:
@@ -135,9 +130,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                         "error": str(e)
                     })
 
-        
         # FINAL RESPONSE
-        
         response_time = round((time.time() - start_time) * 1000, 2)
 
         if log_event:
@@ -148,14 +141,14 @@ def analyze_case_pipeline(request, request_id, log_event=None):
         return CaseResponse(
             status="success",
             similar_cases=similar_cases_formatted,
-            predicted_diagnosis=insight.get("diagnosis", "Unknown"),
-            suggested_treatment=insight.get("treatment", "Not specified"),
-            confidence_score=confidence_data.get("confidence_score", 0.0),
-            confidence_level=confidence_data.get("confidence_level", "Unknown"),
-            clinical_explanation=explanation,
+            predicted_diagnosis=final_insight.get("predicted_diagnosis"),
+            suggested_treatment=final_insight.get("suggested_treatment"),
+            confidence_score=final_insight.get("confidence_score"),
+            confidence_level=final_insight.get("confidence_level"),
+            clinical_explanation=final_insight.get("clinical_explanation"),
             system_metrics=SystemMetrics(
                 response_time_ms=response_time,
-                output_quality="High" if confidence_data.get("confidence_score", 0) > 0.7 else "Moderate"
+                output_quality="High" if final_insight.get("confidence_score", 0) > 0.7 else "Moderate"
             )
         )
 
