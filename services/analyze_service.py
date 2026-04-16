@@ -10,7 +10,7 @@ from insight.explanation_generator import ExplanationGenerator
 from config import TOP_K
 
 
-# Initialize once
+# 🔹 Initialize once
 case_database = fetch_case_database()
 
 insight_aggregator = InsightAggregator()
@@ -22,15 +22,11 @@ def analyze_case_pipeline(request, request_id, log_event=None):
     start_time = time.time()
 
     try:
-        # 🔹 INPUT FORMATTING
-        doctor_notes = request.doctor_notes.strip() if request.doctor_notes else ""
-        query_text = " ".join(request.symptoms).strip()
-
-        if doctor_notes:
-            query_text += " " + doctor_notes
+        # 🔹 INPUT FORMATTING 
+        query_text = request.case_description.strip()
 
         if not query_text:
-            raise HTTPException(status_code=400, detail="Query text is empty")
+            raise HTTPException(status_code=400, detail="case_description is empty")
 
         if log_event:
             log_event("input_processed", request_id, "Input formatted successfully")
@@ -47,7 +43,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                 "num_cases": len(top_matches) if top_matches else 0
             })
 
-        # 🔹 FORMAT SIMILAR CASES 
+        # 🔹 FORMAT SIMILAR CASES
         similar_cases_formatted = []
 
         for c in top_matches:
@@ -55,7 +51,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                 similar_cases_formatted.append(
                     SimilarCase(
                         case_id=c.get("case_id", "Unknown"),
-                        similarity_score=float(c.get("similarity", 0.0)), 
+                        similarity_score=float(c.get("similarity", 0.0)),
                         diagnosis=c.get("diagnosis", "Unknown"),
                         treatment=c.get("treatment", "Unknown")
                     )
@@ -69,7 +65,7 @@ def analyze_case_pipeline(request, request_id, log_event=None):
                 "suggested_resolution": "No similar cases found. Unable to provide a recommendation.",
                 "similar_cases": [],
                 "confidence_score": 0.0,
-                "explanation": "No similar clinical patterns were found in the database."
+                "explanation": "No similar patterns were found in the database."
             }
 
         # 🔹 CONFIDENCE
